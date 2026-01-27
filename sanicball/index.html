@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Sanicball</title>
+    <link rel="shortcut icon" href="TemplateData/favicon.ico">
+    <link rel="stylesheet" href="TemplateData/style.css">
+    
+    <style>
+      #loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        color: white;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+        font-family: Arial, sans-serif;
+      }
+      
+      #loading-status {
+        margin-top: 20px;
+        font-size: 18px;
+        text-align: center;
+      }
+      
+      #loading-progress {
+        width: 300px;
+        margin: 20px;
+      }
+      
+      .progress-text {
+        margin-top: 10px;
+        font-size: 14px;
+        color: #aaa;
+      }
+      
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Loading overlay -->
+    <div id="loading-overlay">
+      <div id="loading-status">Initializing game...</div>
+      <progress id="loading-progress" value="0" max="100"></progress>
+      <div class="progress-text" id="progress-text">0%</div>
+    </div>
+    
+    <!-- Original Unity container -->
+    <div id="unity-container" class="unity-desktop">
+      <canvas id="unity-canvas" width=1280 height=720 tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-logo"></div>
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+      <div id="unity-warning"> </div>
+      <div id="unity-footer">
+        <div id="unity-webgl-logo"></div>
+        <div id="unity-fullscreen-button"></div>
+        <div id="unity-build-title">Sanicball</div>
+      </div>
+    </div>
+    
+    <!-- File merging and loading script -->
+    <script>
+      // Configuration for split files
+      const DATA_PARTS = 14; // 8c6b39efba71729de57583b3cf8c1214.data split into 14 parts
+      const WASM_PARTS = 2;  // 231ddc22e90918b4ff43e5a494d71466.wasm split into 2 parts
+      
+      let mergedDataBlob = null;
+      let mergedWasmBlob = null;
+      let mergedDataBlobUrl = null;
+      let mergedWasmBlobUrl = null;
+      
+      // Update loading status
+      function updateLoadingStatus(message, percent) {
+        const statusElement = document.getElementById('loading-status');
+        const progressElement = document.getElementById('loading-progress');
+        const progressText = document.getElementById('progress-text');
+        
+        if (statusElement) {
+          statusElement.textContent = message;
+        }
+        
+        if (progressElement && percent !== undefined) {
+          progressElement.value = percent;
+        }
+        
+        if (progressText && percent !== undefined) {
+          progressText.textContent = `${Math.round(percent)}%`;
+        }
+      }
+      
+      // Hide loading overlay
+      function hideLoadingOverlay() {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+          overlay.classList.add('hidden');
+        }
+      }
+      
+      // Merge data file parts
+      async function mergeDataFiles() {
+        try {
+          console.log(`Merging data file (${DATA_PARTS} parts)...`);
+          updateLoadingStatus('Loading game data...', 0);
+          
+          const buffers = [];
+          let totalLoaded = 0;
+          
+          for (let i = 1; i <= DATA_PARTS; i++) {
+            console.log(`Loading data part ${i} of ${DATA_PARTS}`);
+            const percent = Math.round((i - 1) / DATA_PARTS * 33);
+            updateLoadingStatus(`Loading game data... (${i}/${DATA_PARTS})`, percent);
+            
+            const response = await fetch(`Build/8c6b39efba71729de57583b3cf8c1214.data.part${i}`);
+            if (!response.ok) {
+              throw new Error(`Failed to load data part ${i}: ${response.status}`);
+            }
+            
+            const buffer = await response.arrayBuffer();
+            buffers.push(buffer);
+            totalLoaded += buffer.byteLength;
+            
+            console.log(`Data part ${i} loaded: ${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
+          }
+          
+          // Merge all buffers
+          const totalLength = buffers.reduce((total, buf) => total + buf.byteLength, 0);
+          const mergedBuffer = new Uint8Array(totalLength);
+          
+          let offset = 0;
+          for (const buffer of buffers) {
+            mergedBuffer.set(new Uint8Array(buffer), offset);
+            offset += buffer.byteLength;
+          }
+          
+          mergedDataBlob = new Blob([mergedBuffer]);
+          mergedDataBlobUrl = URL.createObjectURL(mergedDataBlob);
+          
+          console.log(`Data files merged successfully: ${(totalLength / 1024 / 1024).toFixed(2)} MB total`);
+          updateLoadingStatus('Data loaded!', 33);
+          
+          return mergedDataBlob;
+          
+        } catch (error) {
+          console.error('Error merging data files:', error);
+          throw error;
+        }
+      }
+      
+      // Merge WASM file parts
+      async function mergeWasmFiles() {
+        try {
+          console.log(`Merging WASM file (${WASM_PARTS} parts)...`);
+          updateLoadingStatus('Loading game engine...', 33);
+          
+          const buffers = [];
+          
+          for (let i = 1; i <= WASM_PARTS; i++) {
+            console.log(`Loading WASM part ${i} of ${WASM_PARTS}`);
+            const percent = 33 + Math.round((i - 1) / WASM_PARTS * 33);
+            updateLoadingStatus(`Loading game engine... (${i}/${WASM_PARTS})`, percent);
+            
+            const response = await fetch(`Build/231ddc22e90918b4ff43e5a494d71466.wasm.part${i}`);
+            if (!response.ok) {
+              throw new Error(`Failed to load WASM part ${i}: ${response.status}`);
+            }
+            
+            const buffer = await response.arrayBuffer();
+            buffers.push(buffer);
+            
+            console.log(`WASM part ${i} loaded: ${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB`);
+          }
+          
+          // Merge buffers
+          const totalLength = buffers.reduce((total, buf) => total + buf.byteLength, 0);
+          const mergedBuffer = new Uint8Array(totalLength);
+          
+          let offset = 0;
+          for (const buffer of buffers) {
+            mergedBuffer.set(new Uint8Array(buffer), offset);
+            offset += buffer.byteLength;
+          }
+          
+          mergedWasmBlob = new Blob([mergedBuffer], { type: 'application/wasm' });
+          mergedWasmBlobUrl = URL.createObjectURL(mergedWasmBlob);
+          
+          console.log(`WASM files merged successfully: ${(totalLength / 1024 / 1024).toFixed(2)} MB total`);
+          updateLoadingStatus('Engine loaded!', 66);
+          
+          return mergedWasmBlob;
+          
+        } catch (error) {
+          console.error('Error merging WASM files:', error);
+          throw error;
+        }
+      }
+      
+      // Override fetch to intercept file requests
+      function overrideFetchForFiles() {
+        if (!mergedDataBlob || !mergedWasmBlob) {
+          console.error('Merged blobs not available');
+          return;
+        }
+        
+        const originalFetch = window.fetch;
+        
+        window.fetch = function(input, init) {
+          // Intercept requests for data file
+          if (typeof input === 'string' && input.includes('8c6b39efba71729de57583b3cf8c1214.data')) {
+            console.log('Intercepting fetch request for data file:', input);
+            
+            return Promise.resolve(new Response(mergedDataBlob, {
+              status: 200,
+              statusText: 'OK',
+              headers: {
+                'Content-Type': 'application/octet-stream',
+                'Content-Length': mergedDataBlob.size.toString()
+              }
+            }));
+          }
+          
+          // Intercept requests for WASM file
+          if (typeof input === 'string' && input.includes('231ddc22e90918b4ff43e5a494d71466.wasm')) {
+            console.log('Intercepting fetch request for WASM file:', input);
+            
+            return Promise.resolve(new Response(mergedWasmBlob, {
+              status: 200,
+              statusText: 'OK',
+              headers: {
+                'Content-Type': 'application/wasm',
+                'Content-Length': mergedWasmBlob.size.toString()
+              }
+            }));
+          }
+          
+          // Pass through all other requests
+          return originalFetch.call(this, input, init);
+        };
+        
+        console.log('Fetch override for data and WASM installed');
+      }
+      
+      // Override XMLHttpRequest as well (Unity sometimes uses XHR)
+      function overrideXHRForFiles() {
+        if (!mergedDataBlob || !mergedWasmBlob) {
+          console.error('Merged blobs not available');
+          return;
+        }
+        
+        const originalXHROpen = XMLHttpRequest.prototype.open;
+        const originalXHRSend = XMLHttpRequest.prototype.send;
+        
+        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+          // Store the URL for later use
+          this._requestedUrl = url;
+          
+          // Intercept requests for our split files
+          if (url && (url.includes('8c6b39efba71729de57583b3cf8c1214.data') || 
+                      url.includes('231ddc22e90918b4ff43e5a494d71466.wasm'))) {
+            console.log('Intercepting XHR request for:', url);
+            this._intercepted = true;
+          }
+          
+          return originalXHROpen.apply(this, [method, url, ...args]);
+        };
+        
+        XMLHttpRequest.prototype.send = function(body) {
+          if (this._intercepted) {
+            console.log('Handling intercepted XHR for:', this._requestedUrl);
+            
+            // Determine which blob to use
+            let blobToUse = null;
+            if (this._requestedUrl.includes('8c6b39efba71729de57583b3cf8c1214.data')) {
+              blobToUse = mergedDataBlob;
+            } else if (this._requestedUrl.includes('231ddc22e90918b4ff43e5a494d71466.wasm')) {
+              blobToUse = mergedWasmBlob;
+            }
+            
+            if (blobToUse) {
+              // Simulate successful response
+              setTimeout(() => {
+                this.response = blobToUse;
+                this.status = 200;
+                this.statusText = 'OK';
+                this.readyState = 4;
+                
+                // Trigger load event
+                if (this.onload) {
+                  const event = new Event('load');
+                  this.onload(event);
+                }
+                
+                // Trigger readystatechange
+                if (this.onreadystatechange) {
+                  this.onreadystatechange();
+                }
+              }, 0);
+              
+              return;
+            }
+          }
+          
+          return originalXHRSend.call(this, body);
+        };
+        
+        console.log('XHR override installed');
+      }
+      
+      // Load Unity loader
+      async function loadUnityLoader() {
+        try {
+          console.log('Loading Unity loader...');
+          updateLoadingStatus('Initializing game...', 80);
+          
+          return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'Build/WebGL.loader.js';
+            script.onload = () => {
+              console.log('Unity loader loaded successfully');
+              updateLoadingStatus('Starting game...', 90);
+              resolve();
+            };
+            script.onerror = (err) => {
+              reject(new Error('Failed to load Unity loader'));
+            };
+            document.body.appendChild(script);
+          });
+          
+        } catch (error) {
+          console.error('Error loading Unity loader:', error);
+          throw error;
+        }
+      }
+      
+      // Main initialization function
+      async function initializeGame() {
+        try {
+          console.log('Starting game initialization...');
+          
+          // Step 1: Merge data files (14 parts)
+          await mergeDataFiles();
+          
+          // Step 2: Merge WASM files (2 parts)
+          await mergeWasmFiles();
+          
+          // Step 3: Override fetch and XHR
+          overrideFetchForFiles();
+          overrideXHRForFiles();
+          
+          // Step 4: Load Unity loader
+          await loadUnityLoader();
+          
+          // Step 5: Hide loading overlay and start Unity
+          console.log('Game initialized successfully, starting Unity...');
+          hideLoadingOverlay();
+          startUnity();
+          
+        } catch (error) {
+          console.error('Game initialization failed:', error);
+          updateLoadingStatus(`Error: ${error.message}\nPlease refresh the page.`, 100);
+          throw error;
+        }
+      }
+      
+      // Original Unity startup code (modified to use our blobs)
+      function startUnity() {
+        var container = document.querySelector("#unity-container");
+        var canvas = document.querySelector("#unity-canvas");
+        var loadingBar = document.querySelector("#unity-loading-bar");
+        var progressBarFull = document.querySelector("#unity-progress-bar-full");
+        var fullscreenButton = document.querySelector("#unity-fullscreen-button");
+        var warningBanner = document.querySelector("#unity-warning");
+
+        function unityShowBanner(msg, type) {
+          function updateBannerVisibility() {
+            warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+          }
+          var div = document.createElement('div');
+          div.innerHTML = msg;
+          warningBanner.appendChild(div);
+          if (type == 'error') div.style = 'background: red; padding: 10px;';
+          else {
+            if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+            setTimeout(function() {
+              warningBanner.removeChild(div);
+              updateBannerVisibility();
+            }, 5000);
+          }
+          updateBannerVisibility();
+        }
+
+        var buildUrl = "Build";
+        var config = {
+          dataUrl: mergedDataBlobUrl || buildUrl + "/8c6b39efba71729de57583b3cf8c1214.data",
+          frameworkUrl: buildUrl + "/7faf56499f28bf6c7996977200942458.js",
+          codeUrl: mergedWasmBlobUrl || buildUrl + "/231ddc22e90918b4ff43e5a494d71466.wasm",
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "BK-TN",
+          productName: "Sanicball",
+          productVersion: "v0.9.0",
+          showBanner: unityShowBanner,
+        };
+
+        if (true) {
+          var meta = document.createElement('meta');
+          meta.name = 'viewport';
+          meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+          document.getElementsByTagName('head')[0].appendChild(meta);
+          container.className = "unity-mobile";
+          canvas.className = "unity-mobile";
+          config.devicePixelRatio = 1;
+        } else {
+          canvas.style.width = "1280px";
+          canvas.style.height = "720px";
+        }
+
+        loadingBar.style.display = "block";
+
+        // Use the createUnityInstance function from the loaded WebGL.loader.js
+        if (typeof createUnityInstance !== 'undefined') {
+          createUnityInstance(canvas, config, (progress) => {
+            progressBarFull.style.width = 100 * progress + "%";
+          }).then((unityInstance) => {
+            loadingBar.style.display = "none";
+            fullscreenButton.onclick = () => {
+              unityInstance.SetFullscreen(1);
+            };
+          }).catch((message) => {
+            alert(message);
+          });
+        } else {
+          console.error('createUnityInstance not found. Unity loader may not have loaded correctly.');
+          updateLoadingStatus('Failed to start game. Please refresh.', 100);
+        }
+      }
+      
+      // Start initialization when page loads
+      document.addEventListener('DOMContentLoaded', async function() {
+        console.log('DOM loaded, starting game initialization...');
+        
+        try {
+          await initializeGame();
+        } catch (error) {
+          console.error('Failed to initialize game:', error);
+        }
+      });
+    </script>
+  </body>
+</html>
